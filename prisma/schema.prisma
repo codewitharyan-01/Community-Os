@@ -1,0 +1,810 @@
+// COMMUNITY OS — Prisma Schema (SQLite for local demo, portable to PostgreSQL)
+// Multi-tenant: every domain row carries communityId. Organization is the platform-level tenant.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Platform / Tenancy ───────────────────────────────────────────────────────
+
+model Organization {
+  id          String      @id @default(cuid())
+  name        String
+  plan        String      @default("PRO") // STARTER | PRO | ENTERPRISE
+  createdAt   DateTime    @default(now())
+  communities Community[]
+}
+
+model Community {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  name           String
+  code           String       @unique // join code, e.g. GHR-7F82A
+  city           String
+  state          String
+  address        String       @default("")
+  // configurable knobs (JSON string) — billing, governance, notifications
+  config         String       @default("{}")
+  createdAt      DateTime     @default(now())
+
+  buildings   Building[]
+  users       User[]
+  units       Unit[]
+  vehicles    Vehicle[]
+  parking     ParkingSlot[]
+  invoices    Invoice[]
+  billingRuns BillingRun[]
+  payments    Payment[]
+  ledger      LedgerEntry[]
+  expenses    Expense[]
+  budgetLines BudgetLine[]
+  issues      Issue[]
+  posts       Post[]
+  reports     Report[]
+  polls       Poll[]
+  events      Event[]
+  facilities  Facility[]
+  bookings    Booking[]
+  visitors    Visitor[]
+  incidents   SecurityIncident[]
+  staff       Staff[]
+  vendors     Vendor[]
+  tasks       MaintenanceTask[]
+  assets      Asset[]
+  documents   Document[]
+  calendar    CalendarItem[]
+  emergency   EmergencyAlert[]
+}
+
+model Building {
+  id          String        @id @default(cuid())
+  communityId String
+  community   Community     @relation(fields: [communityId], references: [id])
+  name        String // Tower A
+  code        String // A
+  floors      Int           @default(10)
+  units       Unit[]
+  parking     ParkingSlot[]
+
+  @@index([communityId])
+}
+
+model Unit {
+  id            String        @id @default(cuid())
+  communityId   String
+  community     Community     @relation(fields: [communityId], references: [id])
+  buildingId    String
+  building      Building      @relation(fields: [buildingId], references: [id])
+  floor         Int
+  label         String // A-402
+  areaSqft      Int           @default(1000)
+  status        String        @default("VACANT") // OCCUPIED | VACANT
+  householdName String        @default("")
+  members       Membership[]
+  vehicles      Vehicle[]
+  parkingSlots  ParkingSlot[]
+  invoices      Invoice[]
+  bookings      Booking[]
+  visitors      Visitor[]
+
+  @@unique([buildingId, label])
+  @@index([communityId])
+}
+
+// ─── People ───────────────────────────────────────────────────────────────────
+
+model User {
+  id               String     @id @default(cuid())
+  email            String     @unique
+  passwordHash     String
+  name             String
+  phone            String     @default("")
+  role             String     @default("OWNER")
+  // SUPER_ADMIN, COMMUNITY_ADMIN, COMMITTEE_MEMBER, SECRETARY, TREASURER, ACCOUNTANT,
+  // FACILITY_MANAGER, SECURITY_MANAGER, SECURITY_GUARD, MAINTENANCE_STAFF, VENDOR,
+  // OWNER, TENANT, FAMILY_MEMBER
+  communityId      String?
+  community        Community? @relation(fields: [communityId], references: [id])
+  vendorId         String?    @unique
+  vendorProfile    Vendor?    @relation("VendorAccount", fields: [vendorId], references: [id])
+  staffId          String?    @unique
+  staffProfile     Staff?     @relation("StaffAccount", fields: [staffId], references: [id])
+  language         String     @default("en-IN")
+  emergencyContact String     @default("")
+  avatarHue        Int        @default(0)
+  privacy          String     @default("{}") // JSON: phoneVisibility, profileVisibility
+  notifPrefs       String     @default("{}") // JSON channels
+  active           Boolean    @default(true)
+  createdAt        DateTime   @default(now())
+
+  memberships    Membership[]
+  sessions       Session[]
+  notifications  Notification[]
+  payments       Payment[]
+  issues         Issue[]             @relation("IssueAuthor")
+  assignedIssues Issue[]             @relation("IssueAssignee")
+  assignedTasks  MaintenanceTask[]   @relation("TaskAssignee")
+  issueComments  IssueComment[]
+  issueVotes     IssueVote[]
+  posts          Post[]
+  postComments   PostComment[]
+  postVotes      PostVote[]
+  pollVotes      PollVote[]
+  eventRegs      EventRegistration[]
+  bookings       Booking[]
+  visitorPasses  Visitor[]           @relation("VisitorHost")
+  auditLogs      AuditLog[]
+  consents       ConsentRecord[]
+
+  @@index([communityId])
+}
+
+model Membership {
+  id        String  @id @default(cuid())
+  userId    String
+  user      User    @relation(fields: [userId], references: [id])
+  unitId    String
+  unit      Unit    @relation(fields: [unitId], references: [id])
+  type      String  @default("OWNER") // OWNER | TENANT | FAMILY_MEMBER
+  isPrimary Boolean @default(false)
+
+  @@unique([userId, unitId])
+  @@index([unitId])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ─── Property ops ─────────────────────────────────────────────────────────────
+
+model Vehicle {
+  id          String    @id @default(cuid())
+  communityId String
+  community   Community @relation(fields: [communityId], references: [id])
+  unitId      String?
+  unit        Unit?     @relation(fields: [unitId], references: [id])
+  userId      String?
+  number      String    @unique // GJ01AB1234
+  type        String    @default("CAR") // CAR | BIKE | SCOOTER | EV | BICYCLE | OTHER
+  model       String    @default("")
+  color       String    @default("")
+
+  @@index([communityId])
+}
+
+model ParkingSlot {
+  id          String    @id @default(cuid())
+  communityId String
+  community   Community @relation(fields: [communityId], references: [id])
+  buildingId  String?
+  building    Building? @relation(fields: [buildingId], references: [id])
+  code        String // A-402-P1
+  area        String    @default("Basement 1")
+  type        String    @default("COVERED") // COVERED | OPEN | VISITOR | EV
+  unitId      String?
+  unit        Unit?     @relation(fields: [unitId], references: [id])
+
+  @@unique([communityId, code])
+  @@index([communityId])
+}
+
+// ─── Finance ──────────────────────────────────────────────────────────────────
+
+model BillingRun {
+  id              String    @id @default(cuid())
+  communityId     String
+  community       Community @relation(fields: [communityId], references: [id])
+  period          String // 2026-10
+  title           String
+  status          String    @default("DRAFT") // DRAFT | CALCULATED | APPROVED | POSTED | VOIDED
+  unitCount       Int       @default(0)
+  totalAmount     Int       @default(0)
+  createdByUserId String
+  postedAt        DateTime?
+  createdAt       DateTime  @default(now())
+
+  invoices Invoice[]
+
+  @@index([communityId])
+}
+
+model Invoice {
+  id           String      @id @default(cuid())
+  communityId  String
+  community    Community   @relation(fields: [communityId], references: [id])
+  unitId       String
+  unit         Unit        @relation(fields: [unitId], references: [id])
+  billingRunId String?
+  billingRun   BillingRun? @relation(fields: [billingRunId], references: [id])
+  number       String      @unique // INV-2026-10-A-402
+  period       String // 2026-10
+  issuedOn     DateTime
+  dueOn        DateTime
+  total        Int
+  lateFee      Int         @default(0)
+  status       String      @default("PENDING") // PENDING | PAID | OVERDUE | PARTIAL | VOIDED
+  paidAt       DateTime?
+  createdAt    DateTime    @default(now())
+
+  items    InvoiceItem[]
+  payments Payment[]
+
+  @@unique([unitId, period])
+  @@index([communityId, status])
+}
+
+model InvoiceItem {
+  id        String  @id @default(cuid())
+  invoiceId String
+  invoice   Invoice @relation(fields: [invoiceId], references: [id])
+  kind      String  @default("MAINTENANCE") // MAINTENANCE | WATER | PARKING | SINKING_FUND | REPAIR_FUND | LATE_FEE | OTHER
+  label     String
+  amount    Int
+
+  @@index([invoiceId])
+}
+
+model Payment {
+  id             String    @id @default(cuid())
+  communityId    String
+  community      Community @relation(fields: [communityId], references: [id])
+  invoiceId      String
+  invoice        Invoice   @relation(fields: [invoiceId], references: [id])
+  userId         String
+  user           User      @relation(fields: [userId], references: [id])
+  amount         Int
+  method         String    @default("UPI") // UPI | CARD | NETBANKING
+  providerTxn    String    @unique // TXN-DEMO-xxxxx
+  idempotencyKey String    @unique
+  status         String    @default("SUCCESS") // SUCCESS | FAILED
+  receiptNumber  String    @unique
+  createdAt      DateTime  @default(now())
+
+  @@index([communityId])
+}
+
+model LedgerEntry {
+  id          String    @id @default(cuid())
+  communityId String
+  community   Community @relation(fields: [communityId], references: [id])
+  date        DateTime
+  type        String // INCOME | EXPENSE
+  category    String
+  description String
+  amount      Int
+  refType     String    @default("") // PAYMENT | EXPENSE
+  refId       String    @default("")
+
+  @@index([communityId, type])
+}
+
+model Expense {
+  id             String    @id @default(cuid())
+  communityId    String
+  community      Community @relation(fields: [communityId], references: [id])
+  vendorId       String?
+  vendor         Vendor?   @relation(fields: [vendorId], references: [id])
+  category       String // SECURITY | ELECTRICITY | CLEANING | WATER | REPAIRS | GARDEN | LIFT | EVENTS | ADMIN | OTHER
+  description    String
+  amount         Int
+  date           DateTime
+  status         String    @default("PENDING_APPROVAL") // DRAFT | PENDING_APPROVAL | APPROVED | PAID | REJECTED
+  approvedByName String    @default("")
+  paidAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([communityId, status])
+}
+
+model BudgetLine {
+  id           String    @id @default(cuid())
+  communityId  String
+  community    Community @relation(fields: [communityId], references: [id])
+  year         Int
+  category     String
+  budgetAmount Int
+  notes        String    @default("")
+
+  @@unique([communityId, year, category])
+}
+
+// ─── Issues ───────────────────────────────────────────────────────────────────
+
+model Issue {
+  id               String    @id @default(cuid())
+  communityId      String
+  community        Community @relation(fields: [communityId], references: [id])
+  authorId         String
+  author           User      @relation("IssueAuthor", fields: [authorId], references: [id])
+  title            String
+  description      String
+  category         String // WATER | PLUMBING | DRAINAGE | ELECTRICAL | LIFT | SECURITY | PARKING | CLEANING | NOISE | GARBAGE | GARDEN | OTHER
+  location         String    @default("")
+  status           String    @default("SUBMITTED") // SUBMITTED | UNDER_REVIEW | ASSIGNED | IN_PROGRESS | WAITING | RESOLVED | VERIFIED | CLOSED
+  severity         String    @default("MEDIUM") // LOW | MEDIUM | HIGH | CRITICAL
+  adminBoost       Int       @default(0) // admin priority boost
+  upvoteCount      Int       @default(0)
+  commentCount     Int       @default(0)
+  attachmentPath   String    @default("")
+  assignedToUserId String?
+  assignedToUser   User?     @relation("IssueAssignee", fields: [assignedToUserId], references: [id])
+  assignedVendorId String?
+  assignedVendor   Vendor?   @relation("IssueVendor", fields: [assignedVendorId], references: [id])
+  slaHours         Int       @default(24)
+  createdAt        DateTime  @default(now())
+  resolvedAt       DateTime?
+
+  comments IssueComment[]
+  votes    IssueVote[]
+  timeline IssueEvent[]
+  tasks    MaintenanceTask[]
+
+  @@index([communityId, status])
+}
+
+model IssueComment {
+  id        String   @id @default(cuid())
+  issueId   String
+  issue     Issue    @relation(fields: [issueId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  body      String
+  internal  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([issueId])
+}
+
+model IssueVote {
+  id      String @id @default(cuid())
+  issueId String
+  issue   Issue  @relation(fields: [issueId], references: [id])
+  userId  String
+  user    User   @relation(fields: [userId], references: [id])
+
+  @@unique([issueId, userId])
+}
+
+model IssueEvent {
+  id         String   @id @default(cuid())
+  issueId    String
+  issue      Issue    @relation(fields: [issueId], references: [id])
+  actorName  String
+  fromStatus String   @default("")
+  toStatus   String   @default("")
+  note       String   @default("")
+  createdAt  DateTime @default(now())
+
+  @@index([issueId])
+}
+
+// ─── Community feed ───────────────────────────────────────────────────────────
+
+model Post {
+  id             String    @id @default(cuid())
+  communityId    String
+  community      Community @relation(fields: [communityId], references: [id])
+  authorId       String
+  author         User      @relation(fields: [authorId], references: [id])
+  type           String    @default("DISCUSSION") // ANNOUNCEMENT | ISSUE | SUGGESTION | EVENT | LOST_FOUND | ALERT | APPRECIATION | DISCUSSION
+  title          String    @default("")
+  body           String
+  pinned         Boolean   @default(false)
+  hidden         Boolean   @default(false)
+  commentsLocked Boolean   @default(false)
+  upvoteCount    Int       @default(0)
+  commentCount   Int       @default(0)
+  createdAt      DateTime  @default(now())
+
+  comments PostComment[]
+  votes    PostVote[]
+
+  @@index([communityId, hidden])
+}
+
+model PostComment {
+  id        String   @id @default(cuid())
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  body      String
+  hidden    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([postId])
+}
+
+model PostVote {
+  id     String @id @default(cuid())
+  postId String
+  post   Post   @relation(fields: [postId], references: [id])
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([postId, userId])
+}
+
+model Report {
+  id           String    @id @default(cuid())
+  communityId  String
+  community    Community @relation(fields: [communityId], references: [id])
+  reporterId   String
+  targetType   String // POST | COMMENT | ISSUE
+  targetId     String
+  reason       String
+  status       String    @default("OPEN") // OPEN | ACTIONED | DISMISSED
+  reviewedNote String    @default("")
+  createdAt    DateTime  @default(now())
+
+  @@index([communityId, status])
+}
+
+// ─── Governance ───────────────────────────────────────────────────────────────
+
+model Poll {
+  id              String       @id @default(cuid())
+  communityId     String
+  community       Community    @relation(fields: [communityId], references: [id])
+  question        String
+  description     String       @default("")
+  kind            String       @default("INFORMAL") // INFORMAL | OFFICIAL
+  anonymous       Boolean      @default(true)
+  startsAt        DateTime     @default(now())
+  endsAt          DateTime
+  closed          Boolean      @default(false)
+  createdByUserId String
+  createdAt       DateTime     @default(now())
+  options         PollOption[]
+  votes           PollVote[]
+
+  @@index([communityId])
+}
+
+model PollOption {
+  id       String     @id @default(cuid())
+  pollId   String
+  poll     Poll       @relation(fields: [pollId], references: [id])
+  label    String
+  position Int        @default(0)
+  votes    PollVote[]
+}
+
+model PollVote {
+  id        String     @id @default(cuid())
+  pollId    String
+  poll      Poll       @relation(fields: [pollId], references: [id])
+  optionId  String
+  option    PollOption @relation(fields: [optionId], references: [id])
+  userId    String
+  user      User       @relation(fields: [userId], references: [id])
+  createdAt DateTime   @default(now())
+
+  @@unique([pollId, userId])
+}
+
+// ─── Events / Facilities / Calendar ───────────────────────────────────────────
+
+model Event {
+  id              String    @id @default(cuid())
+  communityId     String
+  community       Community @relation(fields: [communityId], references: [id])
+  title           String
+  type            String    @default("EVENT") // EVENT | FESTIVAL | MEETING | MAINTENANCE
+  description     String    @default("")
+  location        String    @default("")
+  startsAt        DateTime
+  endsAt          DateTime?
+  budget          Int       @default(0)
+  rsvpEnabled     Boolean   @default(true)
+  volunteerSlots  Int       @default(0)
+  agenda          String    @default("")
+  minutes         String    @default("")
+  cancelled       Boolean   @default(false)
+  createdByUserId String
+  createdAt       DateTime  @default(now())
+
+  registrations EventRegistration[]
+
+  @@index([communityId, startsAt])
+}
+
+model EventRegistration {
+  id        String   @id @default(cuid())
+  eventId   String
+  event     Event    @relation(fields: [eventId], references: [id])
+  userId    String
+  rsvp      String   @default("YES") // YES | NO | MAYBE
+  volunteer Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([eventId, userId])
+}
+
+model Facility {
+  id               String    @id @default(cuid())
+  communityId      String
+  community        Community @relation(fields: [communityId], references: [id])
+  name             String
+  description      String    @default("")
+  hourlyFee        Int       @default(0)
+  openHour         Int       @default(6)
+  closeHour        Int       @default(22)
+  slotMinutes      Int       @default(60)
+  approvalRequired Boolean   @default(false)
+  maxPerMonth      Int       @default(4)
+  active           Boolean   @default(true)
+  bookings         Booking[]
+
+  @@index([communityId])
+}
+
+model Booking {
+  id          String    @id @default(cuid())
+  communityId String
+  community   Community @relation(fields: [communityId], references: [id])
+  facilityId  String
+  facility    Facility  @relation(fields: [facilityId], references: [id])
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  unitId      String?
+  unit        Unit?     @relation(fields: [unitId], references: [id])
+  date        DateTime
+  startHour   Int
+  endHour     Int
+  fee         Int       @default(0)
+  status      String    @default("CONFIRMED") // PENDING | CONFIRMED | CANCELLED | COMPLETED
+  createdAt   DateTime  @default(now())
+
+  @@index([communityId, date])
+}
+
+model CalendarItem {
+  id          String    @id @default(cuid())
+  communityId String
+  community   Community @relation(fields: [communityId], references: [id])
+  title       String
+  type        String    @default("OPERATIONS") // OPERATIONS | FESTIVAL | PAYMENT | MEETING | INSPECTION
+  date        DateTime
+  time        String    @default("")
+  source      String    @default("seeded") // seeded | generated
+
+  @@index([communityId, date])
+}
+
+// ─── Security ─────────────────────────────────────────────────────────────────
+
+model Visitor {
+  id            String    @id @default(cuid())
+  communityId   String
+  community     Community @relation(fields: [communityId], references: [id])
+  name          String
+  phone         String    @default("")
+  vehicleNumber String    @default("")
+  purpose       String    @default("")
+  type          String    @default("GUEST") // GUEST | DELIVERY | CAB | CONTRACTOR | STAFF
+  hostUserId    String?
+  host          User?     @relation("VisitorHost", fields: [hostUserId], references: [id])
+  unitId        String?
+  unit          Unit?     @relation(fields: [unitId], references: [id])
+  passCode      String    @unique
+  validFrom     DateTime
+  validTo       DateTime
+  status        String    @default("EXPECTED") // EXPECTED | CHECKED_IN | CHECKED_OUT | EXPIRED
+  checkedInAt   DateTime?
+  checkedOutAt  DateTime?
+  checkedInBy   String    @default("")
+  notes         String    @default("")
+  createdAt     DateTime  @default(now())
+
+  @@index([communityId, status])
+}
+
+model SecurityIncident {
+  id             String    @id @default(cuid())
+  communityId    String
+  community      Community @relation(fields: [communityId], references: [id])
+  type           String // FIRE | MEDICAL | SECURITY | FLOOD | POWER | OTHER
+  severity       String    @default("MEDIUM") // LOW | MEDIUM | HIGH | CRITICAL
+  title          String
+  description    String
+  location       String    @default("")
+  status         String    @default("OPEN") // OPEN | INVESTIGATING | RESOLVED
+  reportedByName String
+  createdAt      DateTime  @default(now())
+  resolvedAt     DateTime?
+
+  @@index([communityId, status])
+}
+
+model EmergencyAlert {
+  id             String    @id @default(cuid())
+  communityId    String
+  community      Community @relation(fields: [communityId], references: [id])
+  type           String // FIRE | MEDICAL | SECURITY | FLOOD | POWER | OTHER
+  message        String
+  createdByName  String
+  active         Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  resolvedAt     DateTime?
+  resolvedByName String    @default("")
+
+  @@index([communityId, active])
+}
+
+// ─── Staff / Vendors / Maintenance / Assets ───────────────────────────────────
+
+model Staff {
+  id            String    @id @default(cuid())
+  communityId   String
+  name          String
+  workType      String // MAID | COOK | DRIVER | CLEANER | GARDENER | ELECTRICIAN | PLUMBER | OTHER
+  phone         String    @default("")
+  verification  String    @default("PENDING") // VERIFIED | PENDING
+  assignedUnits String    @default("") // comma-separated labels
+  provider      String    @default("")
+  active        Boolean   @default(true)
+  userAccount   User?     @relation("StaffAccount")
+  community     Community @relation(fields: [communityId], references: [id])
+
+  @@index([communityId])
+}
+
+model Vendor {
+  id            String            @id @default(cuid())
+  communityId   String
+  community     Community         @relation(fields: [communityId], references: [id])
+  company       String
+  category      String // SECURITY | CLEANING | LIFT | ELECTRICAL | PLUMBING | GARDEN | PEST_CONTROL | WATER | OTHER
+  contactName   String            @default("")
+  phone         String            @default("")
+  email         String            @default("")
+  contractStart DateTime?
+  contractEnd   DateTime?
+  monthlyAmount Int               @default(0)
+  rating        Int               @default(4)
+  status        String            @default("ACTIVE") // ACTIVE | EXPIRING | EXPIRED
+  expenses      Expense[]
+  tasks         MaintenanceTask[]
+  assignedIssues Issue[]          @relation("IssueVendor")
+  userAccount   User?             @relation("VendorAccount")
+
+  @@index([communityId])
+}
+
+model MaintenanceTask {
+  id               String    @id @default(cuid())
+  communityId      String
+  title            String
+  description      String    @default("")
+  location         String    @default("")
+  priority         String    @default("MEDIUM") // LOW | MEDIUM | HIGH | CRITICAL
+  status           String    @default("OPEN") // OPEN | ASSIGNED | IN_PROGRESS | WAITING | COMPLETED | VERIFIED
+  dueDate          DateTime?
+  assignedToUserId String?
+  assignee         User?     @relation("TaskAssignee", fields: [assignedToUserId], references: [id])
+  assignedVendorId String?
+  vendor           Vendor?   @relation(fields: [assignedVendorId], references: [id])
+  issueId          String?
+  issue            Issue?    @relation(fields: [issueId], references: [id])
+  assetId          String?
+  asset            Asset?    @relation(fields: [assetId], references: [id])
+  createdByName    String    @default("")
+  completedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  community        Community @relation(fields: [communityId], references: [id])
+
+  @@index([communityId, status])
+}
+
+model Asset {
+  id            String            @id @default(cuid())
+  communityId   String
+  assetCode     String            @unique
+  name          String
+  category      String // LIFT | PUMP | GENERATOR | CCTV | FIRE_SAFETY | SOLAR | WATER_TANK | GYM | EV_CHARGER | OTHER
+  location      String            @default("")
+  purchaseDate  DateTime?
+  warrantyUntil DateTime?
+  lastServiceAt DateTime?
+  nextServiceAt DateTime?
+  intervalDays  Int?
+  condition     String            @default("GOOD") // EXCELLENT | GOOD | FAIR | POOR
+  active        Boolean           @default(true)
+  tasks         MaintenanceTask[]
+  community     Community         @relation(fields: [communityId], references: [id])
+
+  @@index([communityId])
+}
+
+// ─── Documents / Comms / System ───────────────────────────────────────────────
+
+model Document {
+  id             String    @id @default(cuid())
+  communityId    String
+  community      Community @relation(fields: [communityId], references: [id])
+  title          String
+  category       String    @default("POLICIES") // REGISTRATION | BYE_LAWS | INSURANCE | CONTRACTS | AUDIT | MINUTES | NOTICES | POLICIES | INVOICES
+  fileName       String
+  filePath       String    @default("")
+  mimeType       String    @default("")
+  size           Int       @default(0)
+  visibility     String    @default("RESIDENT") // ADMIN | COMMITTEE | RESIDENT
+  version        String    @default("v1.0")
+  uploadedByName String
+  createdAt      DateTime  @default(now())
+
+  @@index([communityId, category])
+}
+
+model EmailOutbox {
+  id          String   @id @default(cuid())
+  communityId String?
+  to          String
+  subject     String
+  body        String
+  template    String   @default("generic")
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  communityId String?
+  type        String // PAYMENT | ISSUE | POLL | EVENT | VISITOR | PARKING | SECURITY | ANNOUNCEMENT | EMERGENCY | SYSTEM
+  title       String
+  body        String   @default("")
+  link        String   @default("")
+  priority    String   @default("NORMAL") // NORMAL | HIGH
+  read        Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([userId, read])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  communityId String?
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  actorName   String   @default("System")
+  actorRole   String   @default("")
+  action      String // e.g. ISSUE_STATUS_CHANGE, PAYMENT_RECORDED, EXPENSE_APPROVED
+  entity      String
+  entityId    String   @default("")
+  summary     String   @default("")
+  before      String   @default("")
+  after       String   @default("")
+  createdAt   DateTime @default(now())
+
+  @@index([communityId, createdAt])
+}
+
+model ConsentRecord {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  kind      String // TERMS | PRIVACY | NOTIFICATIONS | DATA_EXPORT
+  granted   Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
